@@ -1,45 +1,98 @@
 # Employee PDF Reconciliation MVP (Phase 1)
 
-This repo contains the planning and build documents for a Phase 1 MVP that ingests 3 PDFs (Client, Work Order, Employee), extracts and compares key fields, supports review/approval, and files approved documents to SharePoint.
+Phase 1 MVP skeleton for local development:
+- FastAPI backend (`/backend`)
+- React + Vite review UI (`/frontend`)
+- SQLAlchemy models + Alembic migration
+- Reconciliation engine v1 with deterministic rules
+- Mock PDF extraction service
+- Mock SharePoint uploader
+- Unit tests for normalization and reconciliation
 
-## Core Workflow
-1. Upload 3 PDFs
-2. Extract and normalize fields
-3. Reconcile values across all 3 documents
-4. Review/approve exceptions
-5. File approved PDFs into client-specific SharePoint invoice folders
+## Architecture Snapshot
 
-## What to Give Codex First
-Start Codex with:
-- `PROJECT_PLAN.md`
-- `BUILD_SPEC.md`
-- `FIELD_RULES_MATRIX.md`
-- `TASKS.md`
+- `backend/app/api`: record, approval, mapping, and metrics endpoints
+- `backend/app/services`: normalization, reconciliation, extraction stub, SharePoint stub
+- `backend/app/db`: SQLAlchemy models and session
+- `backend/alembic`: DB migration scripts
+- `frontend/src`: queue + detail review UI
+- `tests/backend`: pytest unit tests
 
-## Suggested First Codex Prompt
-Read `PROJECT_PLAN.md` and `BUILD_SPEC.md` first. Build a production-oriented Phase 1 MVP skeleton for local development with:
-- backend API
-- frontend review UI
-- database models
-- reconciliation engine v1
-- test coverage for normalization/reconciliation
-- mock implementations for PDF extraction and SharePoint upload
+## Environment Variables
 
-Then generate or update `TASKS.md` with the next implementation tasks in priority order.
+Do not hardcode credentials. Copy and set from examples:
 
-## Suggested Repo Structure (for code)
-```text
-/
-├── docs/
-├── backend/
-├── frontend/
-├── shared/
-├── tests/
-├── samples/
-└── infra/
+- Backend: `backend/.env.example`
+- Frontend: `frontend/.env.example`
+
+Important backend values:
+- `DATABASE_URL` (defaults to local SQLite)
+- `LOCAL_STORAGE_PATH` (where uploaded PDFs are stored)
+- `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`
+
+## Local Setup
+
+### 1) Backend
+
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+alembic upgrade head
+uvicorn app.main:app --reload --port 8000
 ```
 
-## Notes
-- Keep secrets in environment variables only
-- Use mock/stub services first for OCR and SharePoint
-- Build deterministic rules first; use AI only where needed
+Health check:
+
+```bash
+curl http://localhost:8000/health
+```
+
+### 2) Frontend
+
+```bash
+cd frontend
+npm install
+cp .env.example .env
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173).
+
+## MVP API Endpoints
+
+Base path: `/api`
+
+- `POST /api/records/upload`
+- `POST /api/records/{record_id}/process`
+- `GET /api/records`
+- `GET /api/records/{record_id}`
+- `POST /api/records/{record_id}/approve`
+- `POST /api/records/{record_id}/approve-with-exceptions`
+- `POST /api/records/{record_id}/reject`
+- `POST /api/records/{record_id}/sharepoint-upload`
+- `POST /api/records/{record_id}/sharepoint-retry`
+- `GET /api/sharepoint-mappings`
+- `POST /api/sharepoint-mappings`
+- `PUT /api/sharepoint-mappings/{id}`
+- `GET /api/metrics/summary`
+
+## Running Tests
+
+```bash
+cd backend
+source .venv/bin/activate
+PYTHONPATH=. pytest ../tests/backend -q
+```
+
+Covered today:
+- text/date/time/decimal/boolean normalization
+- exact/fuzzy/tolerance/missing/incomplete reconciliation outcomes
+
+## Notes and TODOs
+
+- TODO: Replace `MockPdfExtractionService` with real PDF parsing + OCR fallback.
+- TODO: Replace `MockSharePointUploader` with Microsoft Graph uploader using env credentials.
+- Auth/infrastructure are intentionally minimal in this first iteration.
