@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     sharepoint_client_id: Optional[str] = None
     sharepoint_client_secret: Optional[str] = None
 
+    # Optional AI extraction settings for OCR text parsing.
+    openai_api_key: Optional[str] = None
+    openai_extraction_model: str = "gpt-4.1-mini"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 

@@ -7,5 +7,7 @@ frontend/node_modules/
 backend/.venv/
 backend/mvp.db
 backend/storage/
+mvp.db
+storage/
 frontend/dist/
 .DS_Store

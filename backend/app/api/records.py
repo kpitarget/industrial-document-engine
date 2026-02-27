@@ -11,7 +11,18 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import Approval, AuditLog, Document, ExtractedField, Record, ReconciliationResult, SharePointMapping
+from app.db.models import (
+    Approval,
+    AuditLog,
+    Document,
+    DocumentBatch,
+    ExtractedField,
+    ExtractedRow,
+    Record,
+    ReconciliationResult,
+    RowMatchGroup,
+    SharePointMapping,
+)
 from app.db.session import get_db
 from app.schemas.records import (
     ApprovalRequest,
@@ -26,6 +37,7 @@ from app.schemas.records import (
     UploadResponse,
 )
 from app.services.extraction import MockPdfExtractionService
+from app.services.matching import RowCandidate, build_match_key, match_row_candidates
 from app.services.normalization import normalize_value
 from app.services.reconciliation import DOC_TYPES, reconcile
 from app.services.sharepoint import MockSharePointUploader
@@ -173,9 +185,16 @@ def upload_record_documents(
             },
         )
 
-    external_key = record_group_key or f"key_{uuid.uuid4().hex[:12]}"
+    batch_key = record_group_key or f"batch_{uuid.uuid4().hex[:12]}"
+    external_key = f"key_{uuid.uuid4().hex[:12]}"
 
-    record = Record(external_key=external_key)
+    batch = db.execute(select(DocumentBatch).where(DocumentBatch.batch_key == batch_key)).scalars().first()
+    if not batch:
+        batch = DocumentBatch(batch_key=batch_key, status="received", source="upload")
+        db.add(batch)
+        db.flush()
+
+    record = Record(external_key=external_key, batch_id=batch.id)
     db.add(record)
     db.flush()
 
@@ -202,7 +221,7 @@ def upload_record_documents(
 
     present_doc_types = {doc.doc_type for doc in created_documents}
     record.record_status = "ready_for_processing" if all(doc_type in present_doc_types for doc_type in DOC_TYPES) else "incomplete"
-    _touch_audit(db, record.id, "record_created", "Documents uploaded")
+    _touch_audit(db, record.id, "record_created", f"Documents uploaded (batch={batch.batch_key})")
     db.commit()
 
     return UploadResponse(
@@ -221,11 +240,25 @@ def process_record(record_id: str, db: Session = Depends(get_db)) -> ProcessResp
 
     db.query(ExtractedField).filter(ExtractedField.record_id == record.id).delete()
     db.query(ReconciliationResult).filter(ReconciliationResult.record_id == record.id).delete()
+    db.query(RowMatchGroup).filter(RowMatchGroup.record_id == record.id).delete()
+    db.query(ExtractedRow).filter(ExtractedRow.record_id == record.id).delete()
+
+    if record.batch_id is None:
+        generated_batch_key = f"batch_{uuid.uuid4().hex[:12]}"
+        batch = DocumentBatch(batch_key=generated_batch_key, status="received", source="backfill")
+        db.add(batch)
+        db.flush()
+        record.batch_id = batch.id
 
     normalized_matrix: dict[str, dict[str, Optional[str]]] = {}
+    extracted_row_payloads: list[tuple[ExtractedRow, dict[str, Optional[str]]]] = []
     for document in record.documents:
-        extracted = extraction_service.extract(doc_type=document.doc_type, filename=document.filename)
-        for field_key, raw_value in extracted.fields.items():
+        parsed_document = extraction_service.parse(
+            doc_type=document.doc_type,
+            filename=document.filename,
+            storage_path=document.storage_path,
+        )
+        for field_key, raw_value in parsed_document.fields.items():
             normalized = normalize_value(field_key=field_key, raw_value=raw_value)
             db.add(
                 ExtractedField(
@@ -234,11 +267,70 @@ def process_record(record_id: str, db: Session = Depends(get_db)) -> ProcessResp
                     field_key=field_key,
                     raw_value=raw_value,
                     normalized_value=normalized,
-                    parser_name=extracted.parser_name,
-                    parser_version=extracted.parser_version,
+                    parser_name=parsed_document.parser_name,
+                    parser_version=parsed_document.parser_version,
                 )
             )
             normalized_matrix.setdefault(field_key, {})[document.doc_type] = normalized
+
+        for extracted_row in parsed_document.rows:
+            normalized_row = {
+                field_key: normalize_value(field_key=field_key, raw_value=raw_value)
+                for field_key, raw_value in extracted_row.fields.items()
+            }
+            row_model = ExtractedRow(
+                batch_id=record.batch_id,
+                record_id=record.id,
+                document_id=document.id,
+                doc_type=document.doc_type,
+                row_index=extracted_row.row_index,
+                row_key=None,
+                employee_id=normalized_row.get("employee_id"),
+                employee_name=normalized_row.get("employee_name"),
+                work_order_number=normalized_row.get("work_order_number"),
+                shift_date=normalized_row.get("shift_date"),
+                start_time=normalized_row.get("start_time"),
+                end_time=normalized_row.get("end_time"),
+                total_hours=normalized_row.get("total_hours"),
+                raw_json=json.dumps(extracted_row.fields),
+                normalized_json=json.dumps(normalized_row),
+                parser_name=parsed_document.parser_name,
+                parser_version=parsed_document.parser_version,
+            )
+            db.add(row_model)
+            extracted_row_payloads.append((row_model, normalized_row))
+
+    db.flush()
+
+    row_candidates: list[RowCandidate] = []
+    for row_model, normalized_row in extracted_row_payloads:
+        row_key = build_match_key(normalized_row)
+        row_model.row_key = row_key or None
+        row_candidates.append(
+            RowCandidate(
+                row_id=row_model.id,
+                doc_type=row_model.doc_type,
+                row_index=row_model.row_index,
+                normalized_fields=normalized_row,
+            )
+        )
+
+    matched_rows = match_row_candidates(row_candidates)
+    for matched_row in matched_rows:
+        db.add(
+            RowMatchGroup(
+                batch_id=record.batch_id,
+                record_id=record.id,
+                match_key=matched_row.match_key,
+                status=matched_row.status,
+                confidence=matched_row.confidence,
+                reason=matched_row.reason,
+                client_row_id=matched_row.row_ids_by_doc.get("client"),
+                work_order_row_id=matched_row.row_ids_by_doc.get("work_order"),
+                employee_row_id=matched_row.row_ids_by_doc.get("employee"),
+                payload_json=json.dumps(matched_row.payload),
+            )
+        )
 
     has_all_docs = _has_required_docs(record)
     results, record_status = reconcile(field_values=normalized_matrix, has_all_required_docs=has_all_docs)
@@ -263,7 +355,15 @@ def process_record(record_id: str, db: Session = Depends(get_db)) -> ProcessResp
     record.employee_id = normalized_matrix.get("employee_id", {}).get("employee")
     record.shift_date = normalized_matrix.get("shift_date", {}).get("employee")
     record.record_status = record_status
-    _touch_audit(db, record.id, "record_processed", f"Result status: {record_status}")
+    if record.batch:
+        has_row_issues = any(match.status in {"conflict", "insufficient_data"} for match in matched_rows)
+        record.batch.status = "needs_review" if has_row_issues else "processed"
+    _touch_audit(
+        db,
+        record.id,
+        "record_processed",
+        f"Result status: {record_status}, rows={len(extracted_row_payloads)}, groups={len(matched_rows)}",
+    )
     db.commit()
 
     field_results = _field_results_for_record(db, record)

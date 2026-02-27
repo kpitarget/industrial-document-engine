@@ -9,6 +9,7 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="app-header">
+        <span className="app-brand-mark">MW SERVICES</span>
         <div>
           <h1>Operations Review Dashboard</h1>
           <p>Employee document reconciliation, approvals, and exception management.</p>

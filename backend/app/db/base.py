@@ -3,10 +3,13 @@ from app.db.models import (
     AuditLog,
     Base,
     Client,
+    DocumentBatch,
     Document,
     ExtractedField,
+    ExtractedRow,
     Record,
     ReconciliationResult,
+    RowMatchGroup,
     SharePointMapping,
 )
 
@@ -15,9 +18,12 @@ __all__ = [
     "AuditLog",
     "Base",
     "Client",
+    "DocumentBatch",
     "Document",
     "ExtractedField",
+    "ExtractedRow",
     "Record",
     "ReconciliationResult",
+    "RowMatchGroup",
     "SharePointMapping",
 ]

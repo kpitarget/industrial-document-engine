@@ -12,7 +12,7 @@ os.environ["DATABASE_URL"] = "sqlite:///./test_mvp.db"
 os.environ["LOCAL_STORAGE_PATH"] = "./test_storage"
 
 from app.db.base import Base
-from app.db.models import ExtractedField, ReconciliationResult, Record
+from app.db.models import DocumentBatch, ExtractedField, ExtractedRow, ReconciliationResult, Record, RowMatchGroup
 from app.db.session import SessionLocal, engine
 from app.main import app
 
@@ -58,11 +58,17 @@ def test_upload_process_persists_reconciliation_results() -> None:
     with SessionLocal() as db:
         record_count = db.scalar(select(func.count()).select_from(Record))
         extracted_count = db.scalar(select(func.count()).select_from(ExtractedField))
+        extracted_row_count = db.scalar(select(func.count()).select_from(ExtractedRow))
         results_count = db.scalar(select(func.count()).select_from(ReconciliationResult))
+        row_group_count = db.scalar(select(func.count()).select_from(RowMatchGroup))
+        batch_count = db.scalar(select(func.count()).select_from(DocumentBatch))
 
         assert record_count == 1
         assert extracted_count and extracted_count > 0
+        assert extracted_row_count and extracted_row_count > 0
         assert results_count and results_count > 0
+        assert row_group_count and row_group_count > 0
+        assert batch_count == 1
 
     queue_response = client.get("/api/records")
     assert queue_response.status_code == 200

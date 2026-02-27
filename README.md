@@ -29,6 +29,8 @@ Important backend values:
 - `DATABASE_URL` (defaults to local SQLite)
 - `LOCAL_STORAGE_PATH` (where uploaded PDFs are stored)
 - `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`
+- `OPENAI_API_KEY` (optional, enables AI-assisted OCR text extraction)
+- `OPENAI_EXTRACTION_MODEL` (optional, default `gpt-4.1-mini`)
 
 ## Local Setup
 
@@ -93,6 +95,9 @@ Covered today:
 
 ## Notes and TODOs
 
-- TODO: Replace `MockPdfExtractionService` with real PDF parsing + OCR fallback.
+- `MockPdfExtractionService` now supports:
+  - macOS Vision OCR text extraction (local)
+  - optional OpenAI structured parsing (`OPENAI_API_KEY`)
+  - safe fallback to deterministic mock values if OCR/AI parsing is unavailable
 - TODO: Replace `MockSharePointUploader` with Microsoft Graph uploader using env credentials.
 - Auth/infrastructure are intentionally minimal in this first iteration.
